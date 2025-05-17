@@ -9,11 +9,15 @@ import java.util.List;
 
 public class Main {
     public static void main(String[] args) {
-        Javalin app = Javalin.create().start(8080);
-        app.get("/api/overflows", ctx -> {
-            String requestedDate = ctx.queryParam("date");  // e.g. "2024-02-15"
+        Javalin app = Javalin.create(config -> {
+            config.staticFiles.add("/public");
+        }).start("0.0.0.0", 8080);
 
-            List<ContainerData> overflows = new ArrayList<>();
+
+        app.get("/api/containers", ctx -> {
+            String requestedDate = ctx.queryParam("date");  // Optional filter like "2024-02-15"
+
+            List<ContainerData> containers = new ArrayList<>();
 
             try (CSVReader reader = new CSVReader(new FileReader("altglas_simulation_angepasst.csv"))) {
                 String[] row;
@@ -25,17 +29,11 @@ public class Main {
                         continue;
                     }
 
-                    double fill = Double.parseDouble(row[5]);
                     String date = row[3];
 
-                    // 🧠 Filter by fill level + optional date match
-                    boolean match = fill > 90.0;
-                    if (requestedDate != null) {
-                        match = match && date.equals(requestedDate);
-                    }
-
-                    if (match) {
-                        overflows.add(new ContainerData(
+                    if (requestedDate == null || requestedDate.equals(date)) {
+                        double fill = Double.parseDouble(row[5]);
+                        containers.add(new ContainerData(
                                 row[0], row[1], row[2], date, row[4], fill
                         ));
                     }
@@ -45,8 +43,9 @@ public class Main {
                 return;
             }
 
-            ctx.json(overflows);
+            ctx.json(containers);
         });
+
 
     }
 }
