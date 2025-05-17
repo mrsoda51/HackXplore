@@ -11,6 +11,8 @@ public class Main {
     public static void main(String[] args) {
         Javalin app = Javalin.create().start(8080);
         app.get("/api/overflows", ctx -> {
+            String requestedDate = ctx.queryParam("date");  // e.g. "2024-02-15"
+
             List<ContainerData> overflows = new ArrayList<>();
 
             try (CSVReader reader = new CSVReader(new FileReader("altglas_simulation_angepasst.csv"))) {
@@ -24,24 +26,27 @@ public class Main {
                     }
 
                     double fill = Double.parseDouble(row[5]);
-                    if (fill > 90.0) {
-                        ContainerData data = new ContainerData(
-                                row[0], // containerId
-                                row[1], // district
-                                row[2], // address
-                                row[3], // date
-                                row[4], // time
-                                fill
-                        );
-                        overflows.add(data);
+                    String date = row[3];
+
+                    // 🧠 Filter by fill level + optional date match
+                    boolean match = fill > 90.0;
+                    if (requestedDate != null) {
+                        match = match && date.equals(requestedDate);
+                    }
+
+                    if (match) {
+                        overflows.add(new ContainerData(
+                                row[0], row[1], row[2], date, row[4], fill
+                        ));
                     }
                 }
             } catch (Exception e) {
-                ctx.status(500).result("Error reading CSV: " + e.getMessage());
+                ctx.status(500).result("Error: " + e.getMessage());
                 return;
             }
 
             ctx.json(overflows);
         });
+
     }
 }
