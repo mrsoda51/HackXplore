@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Glass Container Monitor</title>
+  <title>Karlsruhe Container Monitor</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -20,15 +23,25 @@
     }
     .dashboard {
       display: flex;
+      flex-direction: row;
       gap: 20px;
       padding: 20px;
+      align-items: flex-start;
     }
+
     .controls {
       width: 250px;
       background-color: white;
       padding: 15px;
       border-radius: 5px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      flex-shrink: 0;
+    }
+
+    #map {
+      height: 400px;
+      flex: 1;
+      border-radius: 6px;
     }
     .controls label,
     .controls select,
@@ -105,8 +118,7 @@
     </select>
 
   </div>
-
-  <div class="map" id="map">[Map will go here]</div>
+  <div id="map"></div>
 </div>
 
 <div class="stats">
@@ -130,71 +142,115 @@
 
 <script>
   const TIME_OPTIONS = ["06:00", "08:00", "10:00", "12:00", "14:00", "18:00"];
+  let map = L.map("map").setView([49.0069, 8.4037], 13); // Karlsruhe coords
 
-  const daySelect = document.getElementById("day-select");
-  const hourSlider = document.getElementById("hour-slider");
-  const hourLabel = document.getElementById("hour-label");
-  const loadBtn = document.getElementById("load-btn");
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
 
   const typeFilter = document.getElementById("type-filter");
   const districtFilter = document.getElementById("district-filter");
-
-
+  const hourSlider = document.getElementById("hour-slider");
+  const hourLabel = document.getElementById("hour-label");
   const totalEl = document.getElementById("total-containers");
   const criticalEl = document.getElementById("critical-containers");
   const avgEl = document.getElementById("avg-fill-level");
   const breakdownEl = document.getElementById("type-breakdown");
 
   let allData = [];
+  const geocodeCache = {};
+
+  function geocodeAddress(address, callback) {
+    if (geocodeCache[address]) {
+      callback(...geocodeCache[address]);
+      return;
+    }
+
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`, {
+      headers: {
+        'User-Agent': 'GlassContainerDashboard/1.0 (salomorichard2@gmail.com)',
+        'Accept-Language': 'en'
+      }
+    })
+            .then(res => res.json())
+            .then(results => {
+              if (results && results.length > 0) {
+                const { lat, lon } = results[0];
+                geocodeCache[address] = [lat, lon];
+                callback(lat, lon);
+              } else {
+                console.warn("No geocode result for", address);
+              }
+            })
+            .catch(err => {
+              console.error("Geocode error:", err);
+            });
+  }
+
 
   function renderStats(time) {
-    const selectedType = document.getElementById("type-filter").value;
-    const selectedDistrict = document.getElementById("district-filter").value;
+    const selectedType = typeFilter.value;
+    const selectedDistrict = districtFilter.value;
 
-    // Filter the data
     const filtered = allData.filter(d =>
             d.time === time &&
             (selectedType === "all" || d.containerId.endsWith(selectedType)) &&
             (selectedDistrict === "all" || d.district === selectedDistrict)
     );
 
-    // Total containers at this hour
+    // Update Stats
     totalEl.textContent = filtered.length;
-
-    // Critical containers (>=90%)
     criticalEl.textContent = filtered.filter(c => c.fillLevel >= 90).length;
 
-    // Average fill level
     const avg = filtered.length
             ? (filtered.reduce((sum, c) => sum + c.fillLevel, 0) / filtered.length).toFixed(1)
             : 0;
     avgEl.textContent = `${avg}%`;
 
-    // Type breakdown: W/G/B
     const types = { W: 0, G: 0, B: 0 };
     filtered.forEach(c => {
       const type = c.containerId.slice(-1);
       if (types[type] !== undefined) types[type]++;
     });
     breakdownEl.textContent = `W: ${types.W} | G: ${types.G} | B: ${types.B}`;
+
+    // Clear map markers
+    map.eachLayer(layer => {
+      if (layer instanceof L.Marker) {
+        map.removeLayer(layer);
+      }
+    });
+
+    // Add tile layer back if needed
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Show container markers (limit to 30 to avoid spamming API)
+    filtered.slice(0, 5).forEach(container => {
+      const fullAddress = container.address + ", Karlsruhe";
+      geocodeAddress(fullAddress, (lat, lon) => {
+        const popup = `
+          <strong>${container.containerId}</strong><br>
+          ${container.address}<br>
+          Fill Level: ${container.fillLevel}%
+        `;
+        const marker = L.marker([lat, lon]).addTo(map).bindPopup(popup);
+
+        if (container.fillLevel >= 90) {
+          marker.setIcon(L.icon({
+            iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
+            iconSize: [32, 32],
+            iconAnchor: [16, 32],
+            popupAnchor: [0, -32]
+          }));
+        }
+      });
+    });
   }
 
-  typeFilter.addEventListener("change", () => {
-    const time = TIME_OPTIONS[hourSlider.value];
-    renderStats(time);
-  });
-
-  districtFilter.addEventListener("change", () => {
-    const time = TIME_OPTIONS[hourSlider.value];
-    renderStats(time);
-  });
-
-
-  hourSlider.addEventListener("input", () => {
-    const time = TIME_OPTIONS[hourSlider.value];
-    hourLabel.textContent = time;
-    renderStats(time);
-  });
+  const loadBtn = document.getElementById("load-btn");
+  const daySelect = document.getElementById("day-select");
 
   loadBtn.addEventListener("click", () => {
     const selectedDate = daySelect.value;
@@ -204,25 +260,39 @@
             .then(data => {
               allData = data;
 
-              const time = TIME_OPTIONS[hourSlider.value];
-              hourLabel.textContent = time;
-
-              // ✅ Populate district dropdown
+              // populate district dropdown
               const districtSet = new Set(data.map(d => d.district));
-              const districtSelect = document.getElementById("district-filter");
-              districtSelect.innerHTML = '<option value="all">All Districts</option>';
+              districtFilter.innerHTML = '<option value="all">All Districts</option>';
               districtSet.forEach(d => {
                 const opt = document.createElement("option");
                 opt.value = d;
                 opt.textContent = d;
-                districtSelect.appendChild(opt);
+                districtFilter.appendChild(opt);
               });
 
+              const time = TIME_OPTIONS[hourSlider.value];
+              hourLabel.textContent = time;
               renderStats(time);
             })
             .catch(err => {
               alert("Failed to load data: " + err.message);
             });
+  });
+
+  hourSlider.addEventListener("input", () => {
+    const time = TIME_OPTIONS[hourSlider.value];
+    hourLabel.textContent = time;
+    renderStats(time);
+  });
+
+  typeFilter.addEventListener("change", () => {
+    const time = TIME_OPTIONS[hourSlider.value];
+    renderStats(time);
+  });
+
+  districtFilter.addEventListener("change", () => {
+    const time = TIME_OPTIONS[hourSlider.value];
+    renderStats(time);
   });
 
 </script>

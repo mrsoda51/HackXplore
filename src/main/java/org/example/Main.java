@@ -15,7 +15,7 @@ public class Main {
 
 
         app.get("/api/containers", ctx -> {
-            String requestedDate = ctx.queryParam("date");  // Optional filter like "2024-02-15"
+            String requestedDate = ctx.queryParam("date");
 
             List<ContainerData> containers = new ArrayList<>();
 
