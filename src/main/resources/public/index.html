@@ -3,9 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Karlsruhe Container Monitor</title>
+  <title>Glass Container Monitor</title>
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 
   <style>
     body {
@@ -27,6 +29,10 @@
       gap: 20px;
       padding: 20px;
       align-items: flex-start;
+    }
+
+    .leaflet-heatmap-layer {
+      z-index: 600;
     }
 
     .controls {
@@ -86,7 +92,7 @@
   </style>
 </head>
 <body>
-<header>Glass Container Monitor</header>
+<header>Karlsruhe Container Monitor</header>
 <div class="dashboard">
   <div class="controls">
     <label for="day-select">Select Day</label>
@@ -156,6 +162,20 @@
   const criticalEl = document.getElementById("critical-containers");
   const avgEl = document.getElementById("avg-fill-level");
   const breakdownEl = document.getElementById("type-breakdown");
+  const districtCoords = {
+    "Beiertheim": [48.9934, 8.3985],
+    "Durlach": [49.0048, 8.4553],
+    "Mühlburg": [49.0091, 8.3598],
+    "Oststadt": [49.0132, 8.4179],
+    "Weststadt": [49.0066, 8.3887],
+    "Grünwinkel": [48.9977, 8.3579],
+    "Innenstadt-West": [49.0097, 8.4023],
+    "Rüppurr": [48.9852, 8.4104],
+    "Nordstadt": [49.0194, 8.4031],
+    "Dammerstock": [48.9798, 8.3885]
+  };
+  //hardcoded for mock data
+
 
   let allData = [];
   const geocodeCache = {};
@@ -188,9 +208,10 @@
   }
 
 
-  function renderStats(time) {
+  /* function renderStats(time) {
     const selectedType = typeFilter.value;
     const selectedDistrict = districtFilter.value;
+
 
     const filtered = allData.filter(d =>
             d.time === time &&
@@ -221,13 +242,8 @@
       }
     });
 
-    // Add tile layer back if needed
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
-
     // Show container markers (limit to 30 to avoid spamming API)
-    filtered.slice(0, 5).forEach(container => {
+    filtered.slice(0, 30).forEach(container => {
       const fullAddress = container.address + ", Karlsruhe";
       geocodeAddress(fullAddress, (lat, lon) => {
         const popup = `
@@ -247,7 +263,121 @@
         }
       });
     });
+    if (window.currentHeatLayer) {
+      map.removeLayer(window.currentHeatLayer);
+    }
+
+    const overflow = filtered.filter(c => c.fillLevel >= 90);
+    const addressCounts = {};
+    overflow.forEach(c => {
+      const key = c.address + ", Karlsruhe";
+      addressCounts[key] = (addressCounts[key] || 0) + 1;
+    });
+
+    const heatData = [];
+    let processed = 0;
+    const addresses = Object.keys(addressCounts).slice(0, 30); // limit for performance
+
+    addresses.forEach(addr => {
+      geocodeAddress(addr, (lat, lon) => {
+        const intensity = addressCounts[addr];
+        heatData.push([parseFloat(lat), parseFloat(lon), intensity]);
+
+        processed++;
+        if (processed === addresses.length) {
+          window.currentHeatLayer = L.heatLayer(heatData, {
+            radius: 25,
+            blur: 20,
+            maxZoom: 16
+          }).addTo(map);
+        }
+      });
+    });
+  }*/
+  function renderStats(time) {
+    const selectedType = typeFilter.value;
+    const selectedDistrict = districtFilter.value;
+
+    const filtered = allData.filter(d =>
+            d.time === time &&
+            (selectedType === "all" || d.containerId.endsWith(selectedType)) &&
+            (selectedDistrict === "all" || d.district === selectedDistrict)
+    );
+
+    // Update stats
+    totalEl.textContent = filtered.length;
+    criticalEl.textContent = filtered.filter(c => c.fillLevel >= 90).length;
+
+    const avg = filtered.length
+            ? (filtered.reduce((sum, c) => sum + c.fillLevel, 0) / filtered.length).toFixed(1)
+            : 0;
+    avgEl.textContent = `${avg}%`;
+
+    const types = { W: 0, G: 0, B: 0 };
+    filtered.forEach(c => {
+      const type = c.containerId.slice(-1);
+      if (types[type] !== undefined) types[type]++;
+    });
+    breakdownEl.textContent = `W: ${types.W} | G: ${types.G} | B: ${types.B}`;
+
+    // Clear markers and heatmap
+    map.eachLayer(layer => {
+      if (layer instanceof L.Marker || layer instanceof L.HeatLayer) {
+        map.removeLayer(layer);
+      }
+    });
+
+    // Add tiles back
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    const districtCoords = {
+      "Beiertheim": [48.9934, 8.3985],
+      "Durlach": [49.0048, 8.4553],
+      "Mühlburg": [49.0091, 8.3598],
+      "Oststadt": [49.0132, 8.4179],
+      "Weststadt": [49.0066, 8.3887],
+      "Grünwinkel": [48.9977, 8.3579],
+      "Innenstadt-West": [49.0097, 8.4023],
+      "Rüppurr": [48.9852, 8.4104],
+      "Nordstadt": [49.0194, 8.4031],
+      "Dammerstock": [48.9798, 8.3885]
+    };
+
+    const overflow = filtered.filter(c => c.fillLevel >= 90);
+
+    // Count overflows by district
+    const counts = {};
+    overflow.forEach(c => {
+      if (districtCoords[c.district]) {
+        counts[c.district] = (counts[c.district] || 0) + 1;
+      }
+    });
+
+    const heatPoints = [];
+
+    if (selectedDistrict === "all") {
+      // Add all hardcoded districts that have critical containers
+      for (const district in counts) {
+        const [lat, lon] = districtCoords[district];
+        heatPoints.push([lat, lon, counts[district]]);
+      }
+    } else if (districtCoords[selectedDistrict] && counts[selectedDistrict]) {
+      // Add only selected hardcoded district
+      const [lat, lon] = districtCoords[selectedDistrict];
+      heatPoints.push([lat, lon, counts[selectedDistrict]]);
+    }
+
+    if (heatPoints.length > 0) {
+      window.currentHeatLayer = L.heatLayer(heatPoints, {
+        radius: 30,
+        blur: 25,
+        maxZoom: 16
+      }).addTo(map);
+    }
   }
+
 
   const loadBtn = document.getElementById("load-btn");
   const daySelect = document.getElementById("day-select");
